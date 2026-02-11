@@ -1,4 +1,4 @@
-const CACHE_NAME = 'earth-defender-v1';
+const CACHE_NAME = 'earth-defender-v2';
 const ASSETS = [
   './',
   './index.html',
