@@ -483,19 +483,39 @@ canvas.addEventListener('touchstart', e => {
 
     // Right-side swipe zone: punch or laser
     if (player.stunTimer <= 0) {
-      touchAction = {
-        id: touch.identifier,
-        startX: pos.x, startY: pos.y,
-        curX: pos.x, curY: pos.y,
-        type: 'pending',  // becomes 'punch' on move, 'laser' on long-press
-        startTime: Date.now(),
-        moved: false,
-      };
-      // Start charging punch immediately
-      keys['punch'] = true;
-      // Set initial aim to player-forward direction
-      mouse.x = player.x + (player.facingRight ? 50 : -50);
-      mouse.y = player.y;
+      // Laser priority: if tapping near the hero and laser is ready, go straight to laser
+      const pp = playerPos();
+      const pDist = Math.sqrt((pos.x - pp.x) ** 2 + (pos.y - pp.y) ** 2);
+      if (pDist < 100 && player.laserCooldown <= 0 && !player.laserFiring) {
+        touchAction = {
+          id: touch.identifier,
+          startX: pos.x, startY: pos.y,
+          curX: pos.x, curY: pos.y,
+          type: 'laser',
+          startTime: Date.now(),
+          moved: false,
+        };
+        laserDrag.active = true;
+        laserDrag.startX = player.x;
+        laserDrag.startY = player.y;
+        laserDrag.endX = pos.x;
+        laserDrag.endY = pos.y;
+        laserDrag.chargeTimer = 0;
+      } else {
+        touchAction = {
+          id: touch.identifier,
+          startX: pos.x, startY: pos.y,
+          curX: pos.x, curY: pos.y,
+          type: 'pending',  // becomes 'punch' on move, 'laser' on long-press
+          startTime: Date.now(),
+          moved: false,
+        };
+        // Start charging punch immediately
+        keys['punch'] = true;
+        // Set initial aim to player-forward direction
+        mouse.x = player.x + (player.facingRight ? 50 : -50);
+        mouse.y = player.y;
+      }
     }
   }
 }, { passive: false });
@@ -3094,6 +3114,27 @@ function drawTouchControls() {
   }
   ctx.restore();
 
+  // Laser tap zone hint around hero
+  if (state === 'playing' && !laserDrag.active && player.laserCooldown <= 0 && !player.laserFiring && player.stunTimer <= 0 && !touchAction) {
+    ctx.save();
+    const pulseAlpha = 0.2 + Math.sin(titlePulse * 3) * 0.08;
+    ctx.globalAlpha = pulseAlpha;
+    ctx.strokeStyle = '#e63946';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, 100, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // "LASER" label
+    ctx.globalAlpha = pulseAlpha * 0.8;
+    ctx.fillStyle = '#e63946';
+    ctx.font = '5px "Press Start 2P"';
+    ctx.textAlign = 'center';
+    ctx.fillText('LASER', player.x, player.y - 108);
+    ctx.restore();
+  }
+
   // Swipe action feedback
   if (touchAction && state === 'playing') {
     ctx.save();
@@ -3299,7 +3340,7 @@ function drawTitle() {
       'LEFT STICK: MOVE',
       'SWIPE ANYWHERE: PUNCH IN SWIPE DIR',
       'HOLD SWIPE: CHARGE MEGA PUNCH',
-      'HOLD STILL 0.4s, THEN DRAG: LASER',
+      'TAP HERO + DRAG: AIM LASER',
       '',
       'PUNCH ENEMIES INTO EACH OTHER!',
       'DEFLECT BOLTS WITH PUNCH (UPGRADE)',
