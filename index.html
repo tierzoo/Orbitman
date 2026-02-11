@@ -946,7 +946,7 @@ function spawnEnemy(type) {
 function generateWave(n) {
   const list = [];
   const hard = difficulty === 'hard';
-  const count = hard ? (4 + n * 3) : (2 + n * 3);
+  const count = hard ? (3 + n) : (2 + n);
   const bossWaves = hard ? [3, 6, 10] : [4, 7, 10];
   const stunnerMinWave = hard ? 1 : 3;
   
