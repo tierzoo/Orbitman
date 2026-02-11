@@ -9,7 +9,7 @@
 <meta name="theme-color" content="#0a0a1a">
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" href="icon-192.png">
-<title>EARTH DEFENDER</title>
+<title>ORBITMAN</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -481,25 +481,21 @@ canvas.addEventListener('touchstart', e => {
     // Skip if already have an action touch
     if (touchAction) continue;
 
-    // Laser: touch near the hero
-    const pp = playerPos();
-    const pDist = Math.sqrt((pos.x - pp.x) ** 2 + (pos.y - pp.y) ** 2);
-    if (pDist < 55 && player.laserCooldown <= 0 && !player.laserFiring && player.stunTimer <= 0) {
-      touchAction = { id: touch.identifier, startX: pos.x, startY: pos.y, curX: pos.x, curY: pos.y, type: 'laser', startTime: Date.now() };
-      laserDrag.active = true;
-      laserDrag.startX = player.x;
-      laserDrag.startY = player.y;
-      laserDrag.endX = pos.x;
-      laserDrag.endY = pos.y;
-      laserDrag.chargeTimer = 0;
-      continue;
-    }
-
-    // Punch: tap anywhere else
+    // Right-side swipe zone: punch or laser
     if (player.stunTimer <= 0) {
-      touchAction = { id: touch.identifier, startX: pos.x, startY: pos.y, curX: pos.x, curY: pos.y, type: 'punch', startTime: Date.now() };
-      mouse.x = pos.x; mouse.y = pos.y;
+      touchAction = {
+        id: touch.identifier,
+        startX: pos.x, startY: pos.y,
+        curX: pos.x, curY: pos.y,
+        type: 'pending',  // becomes 'punch' on move, 'laser' on long-press
+        startTime: Date.now(),
+        moved: false,
+      };
+      // Start charging punch immediately
       keys['punch'] = true;
+      // Set initial aim to player-forward direction
+      mouse.x = player.x + (player.facingRight ? 50 : -50);
+      mouse.y = player.y;
     }
   }
 }, { passive: false });
@@ -526,20 +522,53 @@ canvas.addEventListener('touchmove', e => {
       }
     }
 
-    // Laser drag
-    if (touchAction && touch.identifier === touchAction.id && touchAction.type === 'laser') {
+    // Swipe action — determine direction and mode
+    if (touchAction && touch.identifier === touchAction.id) {
       touchAction.curX = pos.x;
       touchAction.curY = pos.y;
-      laserDrag.endX = pos.x;
-      laserDrag.endY = pos.y;
-      mouse.x = pos.x; mouse.y = pos.y;
-    }
+      const dx = pos.x - touchAction.startX;
+      const dy = pos.y - touchAction.startY;
+      const swipeDist = Math.sqrt(dx * dx + dy * dy);
 
-    // Punch drag — update aim direction
-    if (touchAction && touch.identifier === touchAction.id && touchAction.type === 'punch') {
-      touchAction.curX = pos.x;
-      touchAction.curY = pos.y;
-      mouse.x = pos.x; mouse.y = pos.y;
+      if (swipeDist > 12) touchAction.moved = true;
+
+      if (touchAction.type === 'pending') {
+        const elapsed = Date.now() - touchAction.startTime;
+        if (touchAction.moved) {
+          // Started moving → it's a punch swipe
+          touchAction.type = 'punch';
+        } else if (elapsed > 400 && !touchAction.moved && player.laserCooldown <= 0 && !player.laserFiring) {
+          // Held still for 0.4s → switch to laser mode
+          touchAction.type = 'laser';
+          keys['punch'] = false;
+          player.punchCharging = false;
+          player.punchCharge = 0;
+          laserDrag.active = true;
+          laserDrag.startX = player.x;
+          laserDrag.startY = player.y;
+          laserDrag.endX = pos.x;
+          laserDrag.endY = pos.y;
+          laserDrag.chargeTimer = 0;
+        }
+      }
+
+      if (touchAction.type === 'punch' && swipeDist > 8) {
+        // Aim punch in the swipe direction (from player position)
+        const angle = Math.atan2(dy, dx);
+        mouse.x = player.x + Math.cos(angle) * 80;
+        mouse.y = player.y + Math.sin(angle) * 80;
+      }
+
+      if (touchAction.type === 'laser') {
+        // Aim laser: direction from start touch to current touch, applied from player
+        if (swipeDist > 10) {
+          const angle = Math.atan2(dy, dx);
+          laserDrag.endX = player.x + Math.cos(angle) * 200;
+          laserDrag.endY = player.y + Math.sin(angle) * 200;
+          mouse.x = laserDrag.endX;
+          mouse.y = laserDrag.endY;
+        }
+      }
     }
   }
 }, { passive: false });
@@ -605,7 +634,12 @@ canvas.addEventListener('touchend', e => {
         }
         laserDrag.active = false;
       }
-      if (touchAction.type === 'punch') {
+      if (touchAction.type === 'punch' || touchAction.type === 'pending') {
+        // If still pending (quick tap, no swipe), punch in facing direction
+        if (touchAction.type === 'pending') {
+          mouse.x = player.x + (player.facingRight ? 50 : -50);
+          mouse.y = player.y;
+        }
         keys['punch'] = false;
       }
       touchAction = null;
@@ -614,7 +648,6 @@ canvas.addEventListener('touchend', e => {
 }, { passive: false });
 
 canvas.addEventListener('touchcancel', e => {
-  // Clean up on cancel
   for (const touch of e.changedTouches) {
     if (touchJoystick && touch.identifier === touchJoystick.id) {
       touchJoystick = null;
@@ -623,7 +656,7 @@ canvas.addEventListener('touchcancel', e => {
     }
     if (touchAction && touch.identifier === touchAction.id) {
       if (touchAction.type === 'laser') laserDrag.active = false;
-      if (touchAction.type === 'punch') keys['punch'] = false;
+      if (touchAction.type === 'punch' || touchAction.type === 'pending') keys['punch'] = false;
       touchAction = null;
     }
   }
@@ -2963,7 +2996,7 @@ function drawHUD() {
   ctx.textAlign = 'right';
   if (isTouchDevice) {
     ctx.fillText('STICK: MOVE', canvas.width - 15, 20);
-    ctx.fillText('TAP: PUNCH', canvas.width - 15, 34);
+    ctx.fillText('SWIPE: PUNCH', canvas.width - 15, 34);
   } else {
     ctx.fillText('WASD: MOVE', canvas.width - 15, 20);
     ctx.fillText('CLICK/SPACE: PUNCH', canvas.width - 15, 34);
@@ -3042,7 +3075,6 @@ function drawTouchControls() {
     ctx.arc(thumbX, thumbY, 18, 0, Math.PI * 2);
     ctx.fill();
 
-    // Direction arrow
     if (d > JOYSTICK_DEAD_ZONE) {
       ctx.globalAlpha = 0.4;
       ctx.strokeStyle = '#ffd166';
@@ -3054,43 +3086,97 @@ function drawTouchControls() {
       ctx.stroke();
     }
   } else {
-    // Resting center dot
     ctx.globalAlpha = 0.3;
     ctx.fillStyle = '#fff';
     ctx.beginPath();
     ctx.arc(jc.x, jc.y, 10, 0, Math.PI * 2);
     ctx.fill();
   }
-
   ctx.restore();
 
-  // Laser touch indicator around player
-  if (state === 'playing' && !laserDrag.active && player.laserCooldown <= 0 && !player.laserFiring && player.stunTimer <= 0) {
+  // Swipe action feedback
+  if (touchAction && state === 'playing') {
     ctx.save();
-    ctx.globalAlpha = 0.15 + Math.sin(titlePulse * 3) * 0.05;
-    ctx.strokeStyle = '#e63946';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 4]);
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, 50, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.restore();
-  }
+    const dx = touchAction.curX - touchAction.startX;
+    const dy = touchAction.curY - touchAction.startY;
+    const swipeDist = Math.sqrt(dx * dx + dy * dy);
 
-  // Touch laser drag crosshair
-  if (touchAction && touchAction.type === 'laser' && laserDrag.active) {
-    ctx.save();
-    ctx.strokeStyle = 'rgba(230,57,70,0.7)';
-    ctx.lineWidth = 2;
-    const tx = laserDrag.endX, ty = laserDrag.endY;
-    ctx.beginPath(); ctx.arc(tx, ty, 12, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(tx - 18, ty); ctx.lineTo(tx - 6, ty);
-    ctx.moveTo(tx + 6, ty); ctx.lineTo(tx + 18, ty);
-    ctx.moveTo(tx, ty - 18); ctx.lineTo(tx, ty - 6);
-    ctx.moveTo(tx, ty + 6); ctx.lineTo(tx, ty + 18);
-    ctx.stroke();
+    if (touchAction.type === 'punch' && swipeDist > 12) {
+      // Show swipe direction arrow from player
+      const angle = Math.atan2(dy, dx);
+      const arrowLen = Math.min(swipeDist * 0.8, 60);
+      const ax = player.x + Math.cos(angle) * 15;
+      const ay = player.y + Math.sin(angle) * 15;
+      const bx = player.x + Math.cos(angle) * (15 + arrowLen);
+      const by = player.y + Math.sin(angle) * (15 + arrowLen);
+
+      // Charge glow
+      const chargeRatio = Math.min(player.punchCharge / PUNCH_MAX_CHARGE, 1);
+      ctx.globalAlpha = 0.4 + chargeRatio * 0.4;
+      ctx.strokeStyle = chargeRatio > 0.7 ? '#ff6b6b' : '#ffd43b';
+      ctx.lineWidth = 3 + chargeRatio * 3;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+
+      // Arrowhead
+      const headLen = 8 + chargeRatio * 6;
+      ctx.beginPath();
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx - Math.cos(angle - 0.4) * headLen, by - Math.sin(angle - 0.4) * headLen);
+      ctx.moveTo(bx, by);
+      ctx.lineTo(bx - Math.cos(angle + 0.4) * headLen, by - Math.sin(angle + 0.4) * headLen);
+      ctx.stroke();
+    }
+
+    if (touchAction.type === 'pending' && !touchAction.moved) {
+      // Show hold progress ring for laser activation
+      const elapsed = Date.now() - touchAction.startTime;
+      const holdProgress = Math.min(elapsed / 400, 1);
+      if (holdProgress > 0.1 && player.laserCooldown <= 0) {
+        ctx.globalAlpha = 0.4;
+        ctx.strokeStyle = '#e63946';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(touchAction.startX, touchAction.startY, 25, -Math.PI / 2, -Math.PI / 2 + holdProgress * Math.PI * 2);
+        ctx.stroke();
+
+        // "LASER" text hint
+        if (holdProgress > 0.6) {
+          ctx.globalAlpha = holdProgress - 0.6;
+          ctx.fillStyle = '#e63946';
+          ctx.font = '6px "Press Start 2P"';
+          ctx.textAlign = 'center';
+          ctx.fillText('LASER', touchAction.startX, touchAction.startY - 35);
+        }
+      }
+    }
+
+    if (touchAction.type === 'laser') {
+      // Show laser aim line from player
+      if (swipeDist > 10) {
+        const angle = Math.atan2(dy, dx);
+        const chargeReady = laserDrag.chargeTimer >= player.laserChargeTime;
+        ctx.globalAlpha = chargeReady ? 0.7 : 0.3;
+        ctx.strokeStyle = chargeReady ? '#e63946' : '#adb5bd';
+        ctx.lineWidth = chargeReady ? 2.5 : 1.5;
+        ctx.setLineDash(chargeReady ? [] : [6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(player.x, player.y);
+        ctx.lineTo(player.x + Math.cos(angle) * player.laserRange, player.y + Math.sin(angle) * player.laserRange);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Crosshair at aim end
+        if (chargeReady) {
+          const tx = player.x + Math.cos(angle) * 120;
+          const ty = player.y + Math.sin(angle) * 120;
+          ctx.beginPath(); ctx.arc(tx, ty, 10, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+    }
+
     ctx.restore();
   }
 }
@@ -3153,12 +3239,10 @@ function drawTitle() {
   const pulse = Math.sin(titlePulse) * 0.15 + 0.85;
   ctx.save();
   ctx.globalAlpha = pulse;
-  ctx.fillStyle = '#e63946';
-  ctx.font = '28px "Press Start 2P"';
+  ctx.fillStyle = '#ffd43b';
+  ctx.font = '32px "Press Start 2P"';
   ctx.textAlign = 'center';
-  ctx.fillText('EARTH', canvas.width / 2, canvas.height * 0.12);
-  ctx.fillStyle = '#ffd166';
-  ctx.fillText('DEFENDER', canvas.width / 2, canvas.height * 0.12 + 40);
+  ctx.fillText('ORBITMAN', canvas.width / 2, canvas.height * 0.12 + 20);
   ctx.restore();
 
   if (menuState === 'main') {
@@ -3213,9 +3297,9 @@ function drawTitle() {
     const tutY = canvas.height * 0.12 + 115;
     const lines = isTouchDevice ? [
       'LEFT STICK: MOVE',
-      'TAP SCREEN: PUNCH THAT DIRECTION',
-      'HOLD TAP: CHARGE MEGA PUNCH',
-      'TOUCH HERO + DRAG: AIM LASER',
+      'SWIPE ANYWHERE: PUNCH IN SWIPE DIR',
+      'HOLD SWIPE: CHARGE MEGA PUNCH',
+      'HOLD STILL 0.4s, THEN DRAG: LASER',
       '',
       'PUNCH ENEMIES INTO EACH OTHER!',
       'DEFLECT BOLTS WITH PUNCH (UPGRADE)',
